@@ -246,10 +246,20 @@ async function handleText(text) {
       await doShowCalories();
     }
 
+    else if (state.step === 4.4) {
+      state.preferences.user_location = text || 'Den Haag';
+      state.step = 4.5; setProgress(6, 'Budget');
+      addMsg('agent', 'What is your monthly gym budget? (e.g. <em>40 euro</em>)');
+      unlockInput();
+    }
+
     else if (state.step === 4.5) {
       if (!text.match(/\d/) && !text.toLowerCase().includes('euro')) {
-        addMsg('agent', 'Please include a number, e.g. <em>40 euro per month</em>.'); unlockInput(); return;
+        addMsg('agent', 'Please include a number, e.g. <em>40 euro per month</em>.'); 
+        unlockInput(); 
+        return;
       }
+
       state.preferences.budget = text;
       state.step = 5; setProgress(7, 'Intensity');
       await doIntensity();
@@ -303,8 +313,8 @@ async function doWorkoutStyle() {
         addMsg('user', v2);
         const tmap = { 'Early morning (6–9am)': 'early morning', 'Afternoon (12–3pm)': 'afternoon', 'Evening (5–8pm)': 'evening' };
         state.preferences.preferred_time = tmap[v2] || v2;
-        state.step = 4.5; setProgress(6, 'Budget');
-        addMsg('agent', 'What is your monthly gym budget? (e.g. <em>40 euro</em>)');
+        state.step = 4.4; setProgress(6, 'Location');
+        addMsg('agent', 'In which city or place should I search for gyms? For example: <em>Den Haag</em>, <em>Delft</em>, or <em>Rotterdam</em>.');
         unlockInput();
       });
     });
