@@ -11,6 +11,7 @@ load_dotenv()
 
 from src.tools import calculate_fitness_calories, fetch_nearby_gyms_free
 from src.nodes import ask_llm
+from services.google_places import search_sport_locations, choose_best_locations
 
 api = FastAPI()
 
@@ -74,17 +75,31 @@ def handle_step(req: StepRequest):
         if location_type == "home":
             return {"gyms": ["Home Workout"]}
 
-        real_gyms = fetch_nearby_gyms_free()
+        user_location = prefs.get("user_location", "Den Haag")
+        workout_style = prefs.get("workout_style", "fitness")
 
-        filtered = ask_llm(f"""The user has these preferences:
-        - Budget: {prefs.get('budget', 'unknown')}
-        - Workout style: {prefs.get('workout_style', 'unknown')}
-        - Preferred time: {prefs.get('preferred_time', 'unknown')}
-        These gyms were found nearby: {real_gyms}.
-        Which gyms best fit the user's preferences? Return only gym names as a comma-separated list.""")
+        try:
+            real_gyms = search_sport_locations(
+                location=user_location,
+                sport_preference=workout_style,
+                max_results=5
+            )
 
-        gyms = [g.strip() for g in filtered.split(",") if g.strip()]
-        return {"gyms": gyms if gyms else real_gyms}
+            best_gyms = choose_best_locations(real_gyms)
+
+            gym_names = [
+                gym["name"]
+                for gym in best_gyms
+                if gym.get("name")
+            ]
+
+            return {"gyms": gym_names if gym_names else ["No gyms found"]}
+
+        except Exception as e:
+            return {
+                "gyms": ["Fallback Gym Network", "Local Community Center Gym"],
+                "error": str(e)
+            }
 
     elif step == "select_gym":
         goal = p.get("goal", "")
