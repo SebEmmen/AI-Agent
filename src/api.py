@@ -9,9 +9,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from src.tools import calculate_fitness_calories, fetch_nearby_gyms_free
+from src.tools import calculate_fitness_calories
 from src.nodes import ask_llm
 from services.google_places import search_sport_locations, choose_best_locations
+
 
 api = FastAPI()
 

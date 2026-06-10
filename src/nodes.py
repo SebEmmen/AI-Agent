@@ -114,7 +114,7 @@ def step_5_preferences(state: PlannerState):
     preferred_time = times.get(time_choice, "flexible")
 
     # Question 4: Location and budget (only if gym)
-    user_location = "Den Haag"
+    user_location = input("\n📍 In welke stad of plaats wil je zoeken naar sportscholen? ").strip()
     budget = "none"
 
     if location_type == "gym":
