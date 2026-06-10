@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from groq import Groq
 from src.schema import PlannerState
 from src.tools import calculate_fitness_calories, fetch_nearby_gyms_free
+from services.google_places import search_sport_locations, choose_best_locations
 
 load_dotenv()  # ← add this line before the client is created
 
@@ -112,13 +113,17 @@ def step_5_preferences(state: PlannerState):
     times = {"1": "early morning", "2": "afternoon", "3": "evening"}
     preferred_time = times.get(time_choice, "flexible")
 
-    # Question 4: Budget (only if gym)
+    # Question 4: Location and budget (only if gym)
+    user_location = "Den Haag"
     budget = "none"
+
     if location_type == "gym":
+        user_location = input("\n📍 In welke stad of plaats wil je zoeken naar sportscholen? ").strip()
+
+        if not user_location:
+            user_location = "Den Haag"
+
         budget = input("\n💶 What is your monthly gym budget in euros? (e.g. 40 euro): ").strip()
-        if "euro" not in budget.lower():
-            print("⚠️ Please include 'euro' in your answer (e.g. '40 euro')")
-            return {"is_step_valid": False, "current_step": 5}
 
     # Question 5: Workout intensity
     print("\n💪 What intensity level do you prefer?")
@@ -131,11 +136,12 @@ def step_5_preferences(state: PlannerState):
 
     preferences = {
         "location_type": location_type,
+        "user_location": user_location,
         "workout_style": workout_style,
         "preferred_time": preferred_time,
         "budget": budget,
         "intensity": intensity,
-        "input": f"{budget}, {location_type}, {workout_style}, {preferred_time}, {intensity}"
+        "input": f"{budget}, {location_type}, {user_location}, {workout_style}, {preferred_time}, {intensity}"
     }
 
     print(f"\n✅ Preferences saved: {location_type} | {workout_style} | {preferred_time} | {intensity}")
@@ -152,6 +158,46 @@ def herstel_step_5(state: PlannerState):
 
 
 def step_6_search_locations(state: PlannerState):
+    print("\n--- [NODE] Step 6: Fetching Sports Locations with Google Places API ---")
+
+    prefs = state.get("preferences", {})
+    location_type = prefs.get("location_type", "gym")
+
+    if location_type == "home":
+        print("🏠 User prefers home workouts, skipping gym search.")
+        return {"found_locations": ["Home Workout"], "current_step": 6}
+
+    user_location = prefs.get("user_location", "Den Haag")
+    workout_style = prefs.get("workout_style", "fitness")
+
+    try:
+        real_gyms = search_sport_locations(
+            location=user_location,
+            sport_preference=workout_style,
+            max_results=5
+        )
+
+        best_gyms = choose_best_locations(real_gyms)
+
+        print(f"📍 Found gyms with Google Places: {best_gyms}")
+
+        gym_names = [
+            gym["name"]
+            for gym in best_gyms
+            if gym.get("name")
+        ]
+
+        return {
+            "found_locations": gym_names if gym_names else ["No gyms found"],
+            "current_step": 6
+        }
+
+    except Exception as e:
+        print(f"❌ Google Places API error: {e}")
+        return {
+            "found_locations": ["Fallback Gym Network", "Local Community Center Gym"],
+            "current_step": 6
+        }
     print("\n--- [NODE] Step 6: Fetching Sports Locations ---")
 
     prefs = state.get("preferences", {})

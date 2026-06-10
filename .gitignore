@@ -1,4 +1,5 @@
 .venv/
 .env
+api_usage.json
 __pycache__/
 *.pyc
