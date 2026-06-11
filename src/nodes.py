@@ -2,12 +2,15 @@
 
 import os
 from dotenv import load_dotenv
+from openai import OpenAI
 from groq import Groq
 from src.schema import PlannerState
 from src.tools import calculate_fitness_calories, fetch_nearby_gyms_free
 from services.google_places import search_sport_locations, choose_best_locations
 
 load_dotenv()  # ← add this line before the client is created
+
+
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
@@ -17,6 +20,29 @@ def ask_llm(prompt: str) -> str:
         messages=[{"role": "user", "content": prompt}]
     )
     return response.choices[0].message.content
+# client = OpenAI(
+#     base_url="http://localhost:1234/v1",
+#     api_key="lm-studio"
+# )
+
+# def ask_llm(prompt: str) -> str:
+#     response = client.chat.completions.create(
+#         model="local-model",
+#         messages=[
+#             {
+#                 "role": "system",
+#                 "content": """You are an expert fitness coach and certified nutritionist. 
+#                 You specialise in personalised workout programming, macronutrient planning, 
+#                 and body composition. Always give specific, evidence-based advice with exact 
+#                 sets, reps, rest times, and macro targets tailored to the user's stats and goals."""
+#             },
+#             {
+#                 "role": "user",
+#                 "content": prompt
+#             }
+#         ]
+#     )
+#     return response.choices[0].message.content
 
 def step_1_fitness_goals(state: PlannerState):
     print("\n=========================================")
@@ -25,14 +51,34 @@ def step_1_fitness_goals(state: PlannerState):
     
     user_goal = input("👉 Wat is je belangrijkste fitnessdoel? (bijv. Build muscle / Lose weight): ")
     
-    # LLM cleans and standardises the goal
     refined = ask_llm(f"""The user entered this fitness goal: "{user_goal}"
     Rewrite it as a clean, short fitness goal in English (max 5 words).
     Only return the goal, nothing else.""")
     
     print(f"🤖 Understood goal: {refined}")
-    return {"fitness_goals": refined, "user_query": user_goal, "current_step": 1}
 
+    # Ask for target weight (optional)
+    print("\n⚖️ Do you have a target weight you want to reach?")
+    target_weight_input = input("👉 Enter target weight in kg, or press Enter to skip: ").strip()
+    target_weight = float(target_weight_input) if target_weight_input else None
+
+    # Ask for deadline (optional)
+    print("\n📅 Do you have a deadline for reaching your goal?")
+    target_date_input = input("👉 Enter a timeframe (e.g. '3 months', '1 year'), or press Enter to skip: ").strip()
+    target_date = target_date_input if target_date_input else None
+
+    if target_weight:
+        print(f"🎯 Target weight: {target_weight}kg")
+    if target_date:
+        print(f"📅 Timeframe: {target_date}")
+
+    return {
+        "fitness_goals": refined,
+        "user_query": user_goal,
+        "target_weight": target_weight,
+        "target_date": target_date,
+        "current_step": 1
+    }
 def step_2_body_composition(state: PlannerState):
     print("\n🤖 AGENT: Laten we je lichaamssamenstelling bekijken.")
     
@@ -79,8 +125,21 @@ def step_4_calculate_calories(state: PlannerState):
     weight = state["body_composition"]["weight"]
     height = state["body_composition"]["height"]
     goals = state["fitness_goals"]
-    
-    calculated_calories = calculate_fitness_calories(weight, height, goals)
+    target_weight = state.get("target_weight")
+    target_date = state.get("target_date")
+
+    calculated_calories = calculate_fitness_calories(
+        weight, height, goals, target_weight, target_date
+    )
+
+    # Tell the user what was calculated and why
+    if target_weight and target_date:
+        diff = target_weight - weight
+        direction = "gain" if diff > 0 else "lose"
+        print(f"📊 To {direction} {abs(diff):.1f}kg in {target_date}: {calculated_calories} kcal/day")
+    else:
+        print(f"📊 Calculated: {calculated_calories} kcal/day")
+
     return {"calorie_target": calculated_calories, "current_step": 4}
 
 def step_5_preferences(state: PlannerState):
@@ -253,12 +312,23 @@ def step_8_create_workout_plan(state: PlannerState):
     print("\n🤖 AGENT: Je definitieve fitness- en voedingsplan genereren...")
 
     prefs = state.get("preferences", {})
+    target_weight = state.get("target_weight")
+    target_date = state.get("target_date")
+
+    # Build optional goal section
+    goal_details = ""
+    if target_weight:
+        goal_details += f"\n    - Target weight: {target_weight}kg"
+    if target_date:
+        goal_details += f"\n    - Timeframe to reach goal: {target_date}"
+    if target_weight and target_date:
+        goal_details += f"\n    - Please structure the plan to realistically achieve this within the timeframe."
 
     prompt = f"""Create a detailed workout and nutrition plan with the following details:
 
     USER PROFILE:
-    - Goal: {state['fitness_goals']}
-    - Weight: {state['body_composition']['weight']}kg
+    - Goal: {state['fitness_goals']}{goal_details}
+    - Current weight: {state['body_composition']['weight']}kg
     - Height: {state['body_composition']['height']}cm
     - Daily calorie target: {state['calorie_target']} kcal
 
@@ -275,7 +345,8 @@ def step_8_create_workout_plan(state: PlannerState):
     2. Warm-up and cool-down routines
     3. A daily nutrition breakdown (protein, carbs, fats)
     4. Meal timing recommendations around workouts
-    5. Recovery tips tailored to the intensity level"""
+    5. Recovery tips tailored to the intensity level
+    {"6. A week-by-week progression plan to reach the target weight within " + target_date if target_weight and target_date else ""}"""
 
     plan = ask_llm(prompt)
     return {"final_workout_plan": plan, "current_step": 8}

@@ -66,7 +66,9 @@ def handle_step(req: StepRequest):
         weight = p.get("weight")
         height = p.get("height")
         goal = p.get("goal", "")
-        calories = calculate_fitness_calories(weight, height, goal)
+        target_weight = p.get("target_weight")
+        target_date = p.get("target_date")
+        calories = calculate_fitness_calories(weight, height, goal, target_weight, target_date)
         return {"calories": calories}
 
     elif step == "search_gyms":

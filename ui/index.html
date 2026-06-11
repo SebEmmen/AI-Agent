@@ -93,7 +93,7 @@ const inp = document.getElementById('inp');
 const sbtn = document.getElementById('sbtn');
 const progBar = document.getElementById('progress');
 const stepLabel = document.getElementById('topbar-step');
-const STEPS = 12;
+const STEPS = 14;
 
 for (let i = 0; i < STEPS; i++) {
   const d = document.createElement('div');
@@ -109,10 +109,19 @@ function setProgress(n, label) {
 }
 
 let state = {
-  step: 0, goal: '', refinedGoal: '',
-  weight: 0, height: 0,
-  schedule: [], calories: 0,
-  preferences: {}, gyms: [], selectedGym: '', plan: ''
+  step: 0,
+  goal: '',
+  refinedGoal: '',
+  targetWeight: null,
+  targetDate: null,
+  weight: 0,
+  height: 0,
+  schedule: [],
+  calories: 0,
+  preferences: {},
+  gyms: [],
+  selectedGym: '',
+  plan: ''
 };
 
 async function callApi(stepName, payload) {
@@ -130,7 +139,9 @@ function addMsg(role, html) {
   row.className = 'row ' + role;
   const av = document.createElement('div');
   av.className = 'av' + (role === 'user' ? ' uav' : '');
-  av.innerHTML = role === 'user' ? '<i class="ti ti-user" style="font-size:13px"></i>' : '<i class="ti ti-robot" style="font-size:13px"></i>';
+  av.innerHTML = role === 'user'
+    ? '<i class="ti ti-user" style="font-size:13px"></i>'
+    : '<i class="ti ti-robot" style="font-size:13px"></i>';
   const bub = document.createElement('div');
   bub.className = 'bub';
   bub.innerHTML = html;
@@ -169,17 +180,10 @@ function showTyping() {
 }
 function removeTyping() { const t = document.getElementById('typ'); if (t) t.remove(); }
 function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-
 function lockInput() { sbtn.disabled = true; inp.disabled = true; }
 function unlockInput() { sbtn.disabled = false; inp.disabled = false; inp.focus(); }
 
-async function agent(html, opts, cb) {
-  lockInput();
-  showTyping(); await delay(500); removeTyping();
-  addMsg('agent', html);
-  if (opts && cb) addOpts(opts, cb);
-  else unlockInput();
-}
+// ─── Main text handler ────────────────────────────────────────────────────────
 
 async function handleText(text) {
   if (!text.trim()) return;
@@ -188,28 +192,59 @@ async function handleText(text) {
   inp.value = ''; inp.style.height = 'auto';
 
   try {
+
+    // Step 0: goal was selected, ask for target weight
     if (state.step === 0) {
       state.goal = text;
-      showTyping();
-      const data = await callApi('refine_goal', { goal: text });
-      removeTyping();
-      state.refinedGoal = data.refined_goal || text;
-      state.step = 1; setProgress(1, 'Body info');
-      addMsg('agent', `Got it! I understood your goal as: <strong>${state.refinedGoal}</strong><br><br>Now let's look at your body. What is your <strong>weight in kg</strong>?`);
+      state.step = 0.1; setProgress(0, 'Goal details');
+      addMsg('agent',
+        `Got it — <strong>${text}</strong>! Do you have a target weight you want to reach?<br>` +
+        `<em style="font-size:12px;color:var(--text2)">Type a number in kg, or press Skip.</em>`
+      );
+      addOpts(['Skip — no target weight'], () => {
+        state.targetWeight = null;
+        askTargetDate();
+      });
       unlockInput();
     }
 
+    // Step 0.1: user typed a target weight
+    else if (state.step === 0.1) {
+      const w = parseFloat(text);
+      if (isNaN(w) || w < 20 || w > 400) {
+        addMsg('agent', 'Please enter a realistic weight in kg (e.g. <em>75</em>), or press Skip.');
+        unlockInput(); return;
+      }
+      state.targetWeight = w;
+      askTargetDate();
+    }
+
+    // Step 0.2: user typed a target date
+    else if (state.step === 0.2) {
+      state.targetDate = text.trim() || null;
+      await startGoalRefinement();
+    }
+
+    // Step 1: weight
     else if (state.step === 1) {
       const w = parseFloat(text);
-      if (isNaN(w)) { addMsg('agent', 'Please enter a number for your weight (e.g. <em>75</em>).'); unlockInput(); return; }
-      state.weight = w; state.step = 1.5;
+      if (isNaN(w) || w < 20 || w > 400) {
+        addMsg('agent', 'Please enter a realistic weight in kg (e.g. <em>75</em>).');
+        unlockInput(); return;
+      }
+      state.weight = w;
+      state.step = 1.5;
       addMsg('agent', 'And your <strong>height in cm</strong>?');
       unlockInput();
     }
 
+    // Step 1.5: height
     else if (state.step === 1.5) {
       const h = parseFloat(text);
-      if (isNaN(h)) { addMsg('agent', 'Please enter a number for your height (e.g. <em>178</em>).'); unlockInput(); return; }
+      if (isNaN(h) || h < 100 || h > 250) {
+        addMsg('agent', 'Please enter a realistic height in cm (e.g. <em>178</em>).');
+        unlockInput(); return;
+      }
       state.height = h;
       showTyping();
       const check = await callApi('validate_body', { weight: state.weight, height: state.height });
@@ -218,16 +253,35 @@ async function handleText(text) {
         addMsg('agent', 'Those values don\'t look realistic. Please re-enter your weight and height.');
         state.step = 1; unlockInput(); return;
       }
-      const calData = await callApi('calculate_calories', { weight: state.weight, height: state.height, goal: state.refinedGoal });
-      const schedData = await callApi('suggest_schedule', { goal: state.refinedGoal });
+      const [calData, schedData] = await Promise.all([
+        callApi('calculate_calories', {
+          weight: state.weight,
+          height: state.height,
+          goal: state.refinedGoal,
+          target_weight: state.targetWeight,
+          target_date: state.targetDate
+        }),
+        callApi('suggest_schedule', { goal: state.refinedGoal })
+      ]);
       removeTyping();
       state.calories = calData.calories;
       state.schedule = schedData.schedule;
-      state.step = 2; setProgress(2, 'Schedule');
+      state.step = 2; setProgress(4, 'Schedule');
+
+      let calNote = '';
+      if (state.targetWeight && state.targetDate) {
+        const diff = (state.targetWeight - state.weight).toFixed(1);
+        const dir = diff > 0 ? 'gain' : 'lose';
+        calNote = `<br><em style="font-size:11px;color:var(--text2)">Calculated to ${dir} ${Math.abs(diff)}kg in ${state.targetDate}</em>`;
+      }
+
       addMsg('agent',
-        `Based on your goal, here is a suggested weekly schedule:<div class="mcard">` +
+        `Here is a suggested weekly schedule:<div class="mcard">` +
         state.schedule.map(s => `<div class="mrow"><i class="ti ti-calendar"></i><span>${s}</span></div>`).join('') +
-        `</div>Does this schedule work for you?`
+        `</div><div class="mcols">` +
+        `<div class="mc"><div class="ml">Daily calories</div><div class="mv" style="color:#534AB7">${state.calories} kcal</div></div>` +
+        `<div class="mc"><div class="ml">Goal</div><div class="mv" style="font-size:12px;padding-top:3px">${state.refinedGoal}</div></div>` +
+        `</div>${calNote}<br>Does this schedule work for you?`
       );
       addOpts(['Yes, looks good!', 'No, suggest something else'], async v => {
         addMsg('user', v);
@@ -236,32 +290,33 @@ async function handleText(text) {
           addMsg('agent', 'Which days work better? (e.g. <em>Tuesday, Thursday, Saturday</em>)');
           unlockInput();
         } else {
-          await doShowCalories();
+          await doShowLocation();
         }
       });
     }
 
+    // Step 2.1: custom schedule typed
     else if (state.step === 2.1) {
       state.schedule = [text];
-      await doShowCalories();
+      await doShowLocation();
     }
 
+    // Step 4.4: city for gym search
     else if (state.step === 4.4) {
       state.preferences.user_location = text || 'Den Haag';
-      state.step = 4.5; setProgress(6, 'Budget');
+      state.step = 4.5; setProgress(8, 'Budget');
       addMsg('agent', 'What is your monthly gym budget? (e.g. <em>40 euro</em>)');
       unlockInput();
     }
 
+    // Step 4.5: budget
     else if (state.step === 4.5) {
       if (!text.match(/\d/) && !text.toLowerCase().includes('euro')) {
-        addMsg('agent', 'Please include a number, e.g. <em>40 euro per month</em>.'); 
-        unlockInput(); 
-        return;
+        addMsg('agent', 'Please include a number, e.g. <em>40 euro per month</em>.');
+        unlockInput(); return;
       }
-
       state.preferences.budget = text;
-      state.step = 5; setProgress(7, 'Intensity');
+      state.step = 5; setProgress(9, 'Intensity');
       await doIntensity();
     }
 
@@ -272,18 +327,49 @@ async function handleText(text) {
   }
 }
 
-async function doShowCalories() {
-  state.step = 3; setProgress(3, 'Location');
+// ─── Helper flows ─────────────────────────────────────────────────────────────
+
+function askTargetDate() {
+  state.step = 0.2; setProgress(1, 'Goal details');
   addMsg('agent',
-    `Schedule confirmed!<div class="mcols">` +
-    `<div class="mc"><div class="ml">Daily calories</div><div class="mv" style="color:#534AB7">${state.calories} kcal</div></div>` +
-    `<div class="mc"><div class="ml">Goal</div><div class="mv" style="font-size:13px;padding-top:2px">${state.refinedGoal}</div></div>` +
-    `</div><br>Where do you prefer to work out?`
+    `Do you have a <strong>timeframe</strong> to reach your goal?<br>` +
+    `<em style="font-size:12px;color:var(--text2)">Type something like "3 months" or "1 year", or press Skip.</em>`
   );
+  addOpts(['Skip — no deadline'], async () => {
+    state.targetDate = null;
+    await startGoalRefinement();
+  });
+  unlockInput();
+}
+
+async function startGoalRefinement() {
+  setProgress(2, 'Refining goal');
+  showTyping();
+  try {
+    const data = await callApi('refine_goal', { goal: state.goal });
+    state.refinedGoal = data.refined_goal || state.goal;
+  } catch(e) {
+    state.refinedGoal = state.goal;
+  }
+  removeTyping();
+
+  let summary = `I understood your goal as: <strong>${state.refinedGoal}</strong>`;
+  if (state.targetWeight) summary += ` · Target: <strong>${state.targetWeight}kg</strong>`;
+  if (state.targetDate) summary += ` · Timeframe: <strong>${state.targetDate}</strong>`;
+  summary += `<br><br>Now let's look at your body. What is your current <strong>weight in kg</strong>?`;
+
+  state.step = 1; setProgress(3, 'Body info');
+  addMsg('agent', summary);
+  unlockInput();
+}
+
+async function doShowLocation() {
+  state.step = 3; setProgress(5, 'Location');
+  addMsg('agent', 'Where do you prefer to work out?');
   addOpts(['At a gym', 'At home'], async v => {
     addMsg('user', v);
     state.preferences.location_type = v === 'At a gym' ? 'gym' : 'home';
-    state.step = 4; setProgress(4, 'Style');
+    state.step = 4; setProgress(6, 'Style');
     await doWorkoutStyle();
   });
 }
@@ -291,30 +377,35 @@ async function doShowCalories() {
 async function doWorkoutStyle() {
   if (state.preferences.location_type === 'home') {
     state.preferences.workout_style = 'home workout';
-    state.step = 4.2; setProgress(5, 'Timing');
+    state.preferences.user_location = 'home';
+    state.preferences.budget = 'none';
+    setProgress(7, 'Timing');
     addMsg('agent', 'When do you prefer to train?');
     addOpts(['Early morning (6–9am)', 'Afternoon (12–3pm)', 'Evening (5–8pm)'], async v => {
       addMsg('user', v);
       const tmap = { 'Early morning (6–9am)': 'early morning', 'Afternoon (12–3pm)': 'afternoon', 'Evening (5–8pm)': 'evening' };
       state.preferences.preferred_time = tmap[v] || v;
-      state.preferences.budget = 'none';
-      state.step = 5; setProgress(7, 'Intensity');
+      state.step = 5; setProgress(9, 'Intensity');
       await doIntensity();
     });
   } else {
     addMsg('agent', 'What type of gym experience do you prefer?');
     addOpts(['Free weights & machines', 'Group classes', 'Both weights & classes'], async v => {
       addMsg('user', v);
-      const smap = { 'Free weights & machines': 'free weights and machines', 'Group classes': 'group classes', 'Both weights & classes': 'both weights and classes' };
+      const smap = {
+        'Free weights & machines': 'free weights and machines',
+        'Group classes': 'group classes',
+        'Both weights & classes': 'both weights and classes'
+      };
       state.preferences.workout_style = smap[v] || v;
-      state.step = 4.2; setProgress(5, 'Timing');
+      setProgress(7, 'Timing');
       addMsg('agent', 'When do you prefer to train?');
       addOpts(['Early morning (6–9am)', 'Afternoon (12–3pm)', 'Evening (5–8pm)'], async v2 => {
         addMsg('user', v2);
         const tmap = { 'Early morning (6–9am)': 'early morning', 'Afternoon (12–3pm)': 'afternoon', 'Evening (5–8pm)': 'evening' };
         state.preferences.preferred_time = tmap[v2] || v2;
-        state.step = 4.4; setProgress(6, 'Location');
-        addMsg('agent', 'In which city or place should I search for gyms? For example: <em>Den Haag</em>, <em>Delft</em>, or <em>Rotterdam</em>.');
+        state.step = 4.4; setProgress(8, 'City');
+        addMsg('agent', 'In which city should I search for gyms? (e.g. <em>Den Haag</em>, <em>Delft</em>, <em>Rotterdam</em>)');
         unlockInput();
       });
     });
@@ -326,8 +417,7 @@ async function doIntensity() {
   addOpts(['Beginner', 'Intermediate', 'Advanced'], async v => {
     addMsg('user', v);
     state.preferences.intensity = v.toLowerCase();
-    state.step = 6; setProgress(8, 'Finding gyms');
-
+    state.step = 6; setProgress(10, 'Finding gyms');
     showTyping();
     try {
       const gymData = await callApi('search_gyms', { preferences: state.preferences });
@@ -336,12 +426,16 @@ async function doIntensity() {
       if (state.gyms.length === 1 && state.gyms[0] === 'Home Workout') {
         removeTyping();
         state.selectedGym = 'Home Workout';
-        state.step = 7; setProgress(9, 'Generating plan');
+        state.step = 7; setProgress(11, 'Generating plan');
         await doGeneratePlan();
       } else {
-        const selectData = await callApi('select_gym', { goal: state.refinedGoal, preferences: state.preferences, gyms: state.gyms });
+        const selectData = await callApi('select_gym', {
+          goal: state.refinedGoal,
+          preferences: state.preferences,
+          gyms: state.gyms
+        });
         removeTyping();
-        state.step = 7; setProgress(9, 'Pick a gym');
+        state.step = 7; setProgress(11, 'Pick a gym');
         addMsg('agent',
           `Found <strong>${state.gyms.length} location${state.gyms.length > 1 ? 's' : ''}</strong> near you. ` +
           (selectData.reason ? `My top pick is <strong>${selectData.selected}</strong> — ${selectData.reason}<br><br>` : '') +
@@ -350,7 +444,7 @@ async function doIntensity() {
         addOpts(state.gyms, async v2 => {
           addMsg('user', v2);
           state.selectedGym = v2;
-          state.step = 8; setProgress(10, 'Generating plan');
+          state.step = 8; setProgress(12, 'Generating plan');
           await doGeneratePlan();
         });
       }
@@ -368,6 +462,8 @@ async function doGeneratePlan() {
   try {
     const data = await callApi('generate_plan', {
       goal: state.refinedGoal,
+      target_weight: state.targetWeight,
+      target_date: state.targetDate,
       weight: state.weight,
       height: state.height,
       calories: state.calories,
@@ -377,12 +473,16 @@ async function doGeneratePlan() {
     });
     loadBub.innerHTML = '';
     state.plan = data.plan;
-    setProgress(12, 'Complete');
+    setProgress(14, 'Complete');
+
+    let goalLine = state.refinedGoal;
+    if (state.targetWeight) goalLine += ` → ${state.targetWeight}kg`;
+    if (state.targetDate) goalLine += ` in ${state.targetDate}`;
 
     addMsg('agent',
       `<strong>Your plan is ready!</strong><br><em style="font-size:12px;color:var(--text2)">${data.summary}</em>` +
       `<div class="mcard">` +
-      `<div class="mrow"><i class="ti ti-target"></i><span><strong>Goal:</strong> ${state.refinedGoal}</span></div>` +
+      `<div class="mrow"><i class="ti ti-target"></i><span><strong>Goal:</strong> ${goalLine}</span></div>` +
       `<div class="mrow"><i class="ti ti-flame"></i><span><strong>Calories:</strong> ${state.calories} kcal/day</span></div>` +
       `<div class="mrow"><i class="ti ti-clock"></i><span><strong>Training time:</strong> ${state.preferences.preferred_time}</span></div>` +
       `<div class="mrow"><i class="ti ti-building"></i><span><strong>Facility:</strong> ${state.selectedGym}</span></div>` +
@@ -398,9 +498,13 @@ async function doGeneratePlan() {
   }
 }
 
+// ─── Event listeners ──────────────────────────────────────────────────────────
+
 sbtn.addEventListener('click', () => { const v = inp.value.trim(); if (v) handleText(v); });
 inp.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sbtn.click(); } });
 inp.addEventListener('input', () => { inp.style.height = 'auto'; inp.style.height = Math.min(inp.scrollHeight, 90) + 'px'; });
+
+// ─── Boot ─────────────────────────────────────────────────────────────────────
 
 (async () => {
   setProgress(0, 'Goal');

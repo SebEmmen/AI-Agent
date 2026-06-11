@@ -67,6 +67,8 @@ if __name__ == "__main__":
     initial_state = {
         "user_query": "",
         "fitness_goals": None,
+        "target_weight": None,     # ← new
+        "target_date": None,       # ← new
         "body_composition": None,
         "week_planning": None,
         "calorie_target": None,

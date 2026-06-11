@@ -40,25 +40,44 @@ def fetch_nearby_gyms_free() -> list:
         print(f"❌ API Error: Could not reach OpenStreetMap ({e})")
         return ["Fallback Gym Network", "Local Community Center Gym"]
 
-def calculate_fitness_calories(weight: float, height: float, fitness_goals: str) -> int:
-    """
-    Step 4 Tool: Calculates daily calorie targets using a simplified 
-    Harris-Benedict formula (assuming a baseline moderate activity multiplier).
-    """
-    # 1. Calculate base Basal Metabolic Rate (BMR) for a generic profile
-    # Formula: 10 * weight (kg) + 6.25 * height (cm) - (5 * age) + 5
-    # Let's assume a default age of 25 for school project simplicity
+def calculate_fitness_calories(weight: float, height: float, fitness_goals: str, 
+                                target_weight: float = None, target_date: str = None) -> int:
+    # 1. Base BMR (assuming age 25)
     base_bmr = (10 * weight) + (6.25 * height) - (5 * 25) + 5
     
-    # 2. Factor in moderate daily activity multiplier (TDEE = BMR * 1.375)
+    # 2. TDEE with moderate activity
     tdee = int(base_bmr * 1.375)
-    
-    # 3. Adjust calories based on the goal stored in the state
+
+    # 3. Calculate required adjustment if target weight and date are given
+    if target_weight and target_date:
+        weight_diff = target_weight - weight  # negative = need to lose, positive = need to gain
+
+        # Parse timeframe into weeks
+        date_lower = target_date.lower()
+        if "week" in date_lower:
+            weeks = float(''.join(filter(str.isdigit, date_lower)) or 12)
+        elif "month" in date_lower:
+            months = float(''.join(filter(str.isdigit, date_lower)) or 3)
+            weeks = months * 4.33
+        elif "year" in date_lower:
+            years = float(''.join(filter(str.isdigit, date_lower)) or 1)
+            weeks = years * 52
+        else:
+            weeks = 12  # default 3 months
+
+        # 1kg of bodyweight ≈ 7700 kcal
+        total_kcal_needed = weight_diff * 7700
+        daily_adjustment = int(total_kcal_needed / (weeks * 7))
+
+        # Cap adjustment at ±1000 kcal for safety
+        daily_adjustment = max(-1000, min(1000, daily_adjustment))
+
+        return tdee + daily_adjustment
+
+    # 4. Fallback: simple goal-based adjustment (no target given)
     if "muscle" in fitness_goals.lower() or "aankomen" in fitness_goals.lower():
-        # Caloric surplus to build muscle
         return tdee + 300
     elif "lose" in fitness_goals.lower() or "afvallen" in fitness_goals.lower():
-        # Caloric deficit to lose weight
         return tdee - 400
-    
+
     return tdee
